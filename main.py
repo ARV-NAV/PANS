@@ -6,11 +6,8 @@
 
 import os
 import argparse
-
-# ================ Third Party Imports ================ #
-
-import cv2 as cv
-from time import sleep, time
+import re
+import subprocess
 
 # ================ User Imports ================ #
 
@@ -21,35 +18,84 @@ from image_manipulation import image_transformation
 from object_detection import detect_and_track
 from object_detection import CentroidTracker
 
+# ================ Third Party Imports ================ #
+
+from time import sleep, time
+import cv2 as cv
+
 # ================ Authorship ================ #
 
 __author__ = "Chris Patenaude"
 __contributors__ = ["Chris Patenaude", "Gabriel Michael",
-                    "Gregory Sanchez", "Donald 'Max' Harkens", "Tobias Hodges"]
+                    "Gregory Sanchez", "Donald 'Max' Harkins", "Tobias Hodges"]
 
 # ================ Global Variables ================ #
 
 # ================ Functions ================ #
 
-
-def getArgs():
+# When using a file for input, use the `--filename` of `-f` argument
+def get_args():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--env", help="Set enviroment: 'prod', or 'dev' (default)")
+    ap.add_argument("-f", "--filename", help="Capture video from a file", dest="filename")
     return vars(ap.parse_args())
 
+# Get the index of the camera using `lsusb`
+def get_capture_device():
+    # regex for finding bus and device ids
+    device_re = re.compile("Bus\s+(?P<bus>\d+)\s+Device\s+(?P<device>\d+).+ID\s(?P<id>\w+:\w+)\s(?P<tag>.+)$", re.I)
+    # check the output of lsusb for a matching regex
+    df = subprocess.check_output("lsusb", shell=True)
+    # loop through each line of lsusb output
+    for i in df.split(bytes('\n')):
+        if i:
+            info = device_re.match(i)
+            if info:
+                dinfo = info.groupdict()
+                # if a matching name is found, grab bus and device info; break
+                if config.DEVICE_NAME in dinfo['tag']:
+                    if config.VERBOSE:
+                        print("Camera found: " + config.DEVICE_NAME)
+                    bus = dinfo['bus']
+                    device = dinfo['device']
+                    break
+
+    # initialize device_index
+    device_index = None
+    # navigate through all video4linux children
+    for file in os.listdir("/sys/class/video4linux"):
+        real_file = os.path.realpath("/sys/class/video4linux/" + file)
+        if config.VERBOSE:
+            print(real_file)
+            print("/" + str(bus[-1]) + "-" + str(device[-1]) + "/")
+        # device with the bus and id information are found:: assign device_index
+        if "/" + str(bus[-1]) + "-" + str(device[-1]) + "/" in real_file:
+            device_index = real_file[-1]
+            if config.VERBOSE:
+                print("Device index is " + str(device_index))
+
+    return device_index
 
 # ================ Main ================ #
 
 if __name__ == "__main__":
 
     # Parse Command Line Arguments
-    args = getArgs()
+    args = get_args()
+
+    # Obtain camera device id
+    device_id = get_capture_device()
+    if device_id is None:
+        raise TypeError
 
     # Component initilization
     imu = Imu(config.IMU_PATH)
 
     # Video Frame Streaming
-    cap = cv.VideoCapture(config.CAPTURE_DEVICE)
+    # Default to connected USB camera, otherwise .avi files in top level dir
+    if args.filename is not None:
+        cap = cv.VideoCapture(args.filename)
+    else:
+        cap = cv.VideoCapture(device_id)
 
     # Set up video writer
     # Define the codec and create VideoWriter object
